@@ -1,0 +1,204 @@
+library(shiny)
+library(shinydashboard)
+library(shinyWidgets)
+library(ggplot2)
+library(dplyr)
+library(shinyjs)
+library(rmarkdown)
+
+# Sample data for demo purposes
+set.seed(123)
+social_data <- data.frame(
+date = seq(as.Date("2023-01-01"), by = "month", length.out = 12),
+posts = sample(50:200, 12, replace = TRUE),
+likes = sample(100:1000, 12, replace = TRUE),
+comments = sample(20:300, 12, replace = TRUE)
+)
+
+# Initialize credentials with default username and password
+credentials <- reactiveValues(username = "admin", password = "password")
+
+ui <- fluidPage(
+useShinyjs(),
+titlePanel("Social Media Usage Analytics Dashboard"),
+
+# Custom CSS for dark mode toggle
+tags$head(
+tags$style(HTML("
+body.dark-mode {
+background-color: #2b2b2b;
+color: #f0f0f0;
+}
+.dark-mode .navbar, .dark-mode .sidebar {
+background-color: #1f1f1f;
+}
+.dark-mode .box {
+background-color: #3b3b3b;
+color: #f0f0f0;
+}
+"))
+),
+
+# Login Page UI
+uiOutput("login_ui"),
+
+# Main Application (hidden until login)
+hidden(div(id = "app_content",
+fluidRow(
+column(12,
+tabsetPanel(id = "tabs",
+tabPanel("Home", value = "home",
+fluidRow(
+box(title = "Overview", width = 12, status = "primary", solidHeader = TRUE,
+p("Welcome to the Social Media Usage Analytics Dashboard.")
+)
+)
+),
+
+tabPanel("Analytics", value = "analytics",
+fluidRow(
+box(title = "Interactive Charts", width = 12, status = "primary", solidHeader = TRUE,
+sidebarLayout(
+sidebarPanel(
+selectInput("metric", "Select Metric:", choices = c("Posts", "Likes", "Comments")),
+dateRangeInput("dateRange", "Select Date Range:",
+start = min(social_data$date),
+end = max(social_data$date))
+),
+mainPanel(
+plotOutput("trendPlot")
+)
+)
+)
+)
+),
+
+tabPanel("Settings", value = "settings",
+fluidRow(
+box(title = "User Settings", width = 12, status = "primary", solidHeader = TRUE,
+shinyWidgets::switchInput("darkMode", "Dark Mode", value = FALSE),
+actionButton("download_csv", "Download CSV Report"),
+actionButton("download_pdf", "Download PDF Report"),
+hr(),
+h4("Change Login Credentials"),
+textInput("new_username", "New Username"),
+passwordInput("new_password", "New Password"),
+actionButton("update_credentials", "Update Credentials")
+)
+)
+),
+
+tabPanel("Profile", value = "profile",
+fluidRow(
+box(title = "User Profile", width = 12, status = "primary", solidHeader = TRUE,
+p("Username: demo_user"),
+p("Email: demo@example.com"),
+p("Member since: 2023")
+)
+)
+)
+)
+)
+)
+))
+)
+
+server <- function(input, output, session) {
+
+# Reactive value for login status
+logged_in <- reactiveVal(FALSE)
+
+# Render login UI
+output$login_ui <- renderUI({
+if (!logged_in()) {
+fluidRow(
+column(4, offset = 4,
+wellPanel(
+textInput("username", "Username"),
+passwordInput("password", "Password"),
+actionButton("login_btn", "Login")
+)
+)
+)
+}
+})
+
+# Handle login attempt
+observeEvent(input$login_btn, {
+if (input$username == credentials$username && input$password == credentials$password) {
+logged_in(TRUE)
+shinyjs::removeClass("app_content", "hidden")
+shinyjs::runjs("$('#login_ui').hide();")
+showNotification("Login successful!", type = "message")
+} else {
+showNotification("Invalid credentials", type = "error")
+}
+})
+
+# Show app content after login
+observe({
+if (logged_in()) {
+shinyjs::show("app_content")
+}
+})
+
+# Toggle Dark Mode
+observeEvent(input$darkMode, {
+if (input$darkMode) {
+shinyjs::addClass("body", "dark-mode")
+} else {
+shinyjs::removeClass("body", "dark-mode")
+}
+})
+
+# Generate trend plot based on selected metric and date range
+output$trendPlot <- renderPlot({
+req(input$metric, input$dateRange)
+data <- social_data %>%
+filter(date >= input$dateRange[1] & date <= input$dateRange[2])
+ggplot(data, aes(x = date, y = .data[[tolower(input$metric)]])) +
+geom_line(color = "steelblue", size = 1.2) +
+labs(title = paste(input$metric, "Over Time"),
+x = "Date",
+y = input$metric) +
+theme_minimal()
+})
+
+# Update credentials
+observeEvent(input$update_credentials, {
+req(input$new_username, input$new_password)
+credentials$username <- input$new_username
+credentials$password <- input$new_password
+showNotification("Credentials updated!", type = "message")
+})
+
+# Download CSV report
+observeEvent(input$download_csv, {
+filename <- "social_media_report.csv"
+write.csv(social_data, filename, row.names = FALSE)
+showNotification("CSV report downloaded.", type = "message")
+})
+
+# Download PDF report
+observeEvent(input$download_pdf, {
+tempReport <- tempfile(fileext = ".Rmd")
+writeLines(c(
+"---",
+"title: 'Social Media Usage Report'",
+"output: pdf_document",
+"---",
+"",
+"## Social Media Usage Data",
+"",
+"```{r echo=FALSE}",
+"library(knitr)",
+"kable(social_data)"
+), tempReport)
+rmarkdown::render(tempReport, output_file = "SocialMediaReport.pdf")
+showNotification("PDF report generated.", type = "message")
+})
+}
+
+shinyApp(ui, server)
+
+
